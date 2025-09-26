@@ -3,8 +3,10 @@ import io
 import logging
 import os
 import pathlib
+import threading
 import time
 import wave
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 from aioesphomeapi import (
     APIClient,
@@ -22,8 +24,31 @@ from zeroconf import (
 )
 
 PIPER_VOICE = os.environ["PIPER_VOICE"]
+NABU_SERVER_URL = os.environ["NABU_SERVER_URL"]
 
 logging.basicConfig(level=logging.INFO)
+
+
+FILE_PATH = "output.wav"
+PORT = 8080
+
+# Make sure the file exists
+if not os.path.exists(FILE_PATH):
+    with open(FILE_PATH, "wb") as f:
+        f.write(b"")  # empty placeholder file
+
+
+class SingleFileHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/" or self.path == f"/{os.path.basename(FILE_PATH)}":
+            self.path = FILE_PATH
+        return super().do_GET()
+
+
+def start_server():
+    server = HTTPServer(("0.0.0.0", PORT), SingleFileHandler)
+    print(f"Serving {FILE_PATH} on port {PORT}")
+    server.serve_forever()
 
 
 class MyListener(ServiceListener):
@@ -94,7 +119,7 @@ async def main(address, port):
                 api.media_player_command(
                     2232357057,
                     # media_url="https://testfiledownload.net/wp-content/uploads/2024/10/1.8-MB.flac",
-                    media_url="http://192.168.0.11:8000/output.wav",
+                    media_url="{NABU_SERVER_URL}/output.wav",
                     device_id=0,
                 )
                 time.sleep(tts_duration)
@@ -172,6 +197,8 @@ def piper(input: str) -> float:
 
 
 if __name__ == "__main__":
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
     os.makedirs(pathlib.Path(f"voices/{PIPER_VOICE}/"), exist_ok=True)
     download_voices.download_voice(PIPER_VOICE, pathlib.Path(f"voices/{PIPER_VOICE}/"))
     zeroconf = Zeroconf()

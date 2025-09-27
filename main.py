@@ -216,4 +216,4 @@ if __name__ == "__main__":
         ha_voice_address = os.getenv("HA_VOICE_IP")
         port = os.getenv("HA_VOICE_PORT")
 
-    asyncio.run(main(ha_voice_address, port))
+    asyncio.run(main(ha_voice_address, int(port)))

@@ -10,8 +10,10 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 from aioesphomeapi import (
     APIClient,
+    VoiceAssistantAudioSettings,
     VoiceAssistantEventType,
 )
+from dotenv import load_dotenv
 from nabu_agent import execute_main_workflow
 from piper import PiperVoice, download_voices
 from pymicro_vad import MicroVad
@@ -22,6 +24,8 @@ from zeroconf import (
     ServiceListener,
     Zeroconf,
 )
+
+load_dotenv()
 
 PIPER_VOICE = os.environ["PIPER_VOICE"]
 NABU_SERVER_URL = os.environ["NABU_SERVER_URL"]
@@ -96,53 +100,49 @@ class nabuServer:
             logging.info("Disconnecting...")
             await self.api_client.disconnect()
 
-    async def handle_pipeline_start(self, a, b, c, d) -> int:
+    async def handle_pipeline_start(
+        self, a: str, b: int, c: VoiceAssistantAudioSettings, d: str | None
+    ) -> int:
         self.api_client.send_voice_assistant_event(
             VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_START, {}
         )
         return 0
 
     async def run(self):
-        try:
-            while True:
-                self.audio_queue.put_nowait(b"")
-                total = b""
-                while True:
-                    chunk = await self.audio_queue.get()
-                    if not chunk:
-                        break
-                    total += chunk
-                wav = pcm_to_wav_bytes(total)
-                result = await execute_main_workflow(wav)
-                tts_duration = self.piper(result)
-                self.api_client.send_voice_assistant_event(
-                    VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_START, {}
-                )
-                logging.info(f"sending tts file: {NABU_SERVER_URL}/output.wav")
+        self.audio_queue.put_nowait(b"")
+        total = b""
+        while True:
+            chunk = await self.audio_queue.get()
+            if not chunk:
+                break
+            total += chunk
+        wav = pcm_to_wav_bytes(total)
+        result = await execute_main_workflow(wav)
+        tts_duration = self.piper(result)
+        self.api_client.send_voice_assistant_event(
+            VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_START, {}
+        )
+        logging.info(f"sending tts file: {NABU_SERVER_URL}/output.wav")
 
-                self.api_client.media_player_command(
-                    2232357057,
-                    media_url=f"{NABU_SERVER_URL}/output.wav",
-                    device_id=0,
-                    volume=100,
-                )
-
-                time.sleep(tts_duration)
-                self.api_client.send_voice_assistant_event(
-                    VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_END, {}
-                )
-                self.api_client.send_voice_assistant_event(
-                    VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, {}
-                )
-                self.reset_vad()
-        except asyncio.CancelledError:
-            logging.info("run cancelled")
-            raise  # re-raise so asyncio knows it was cancelled
+        self.api_client.media_player_command(
+            2232357057,
+            media_url=f"{NABU_SERVER_URL}/output.wav",
+            device_id=0,
+            volume=100,
+        )
+        time.sleep(tts_duration)
+        self.api_client.send_voice_assistant_event(
+            VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_END, {}
+        )
+        self.api_client.send_voice_assistant_event(
+            VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, {}
+        )
+        self.reset_vad()
 
     def reset_vad(self):
         self.vad = MicroVad()
 
-    async def stop(self, _):
+    async def stop(self, _: bool):
         self.cancel_run()
         self.reset_vad()
         logging.info("cancelled run task")
@@ -196,7 +196,9 @@ if __name__ == "__main__":
     server_thread.start()
     os.makedirs(pathlib.Path(f"voices/{PIPER_VOICE}/"), exist_ok=True)
     download_voices.download_voice(PIPER_VOICE, pathlib.Path(f"voices/{PIPER_VOICE}/"))
-    if os.getenv("HA_VOICE_IP") is None:
+    ha_voice_address = os.getenv("HA_VOICE_IP")
+    port = os.getenv("HA_VOICE_PORT")
+    if ha_voice_address is None or port:
         zeroconf = Zeroconf()
         listener = MyListener()
         browser = ServiceBrowser(zeroconf, HNAME, listener)
@@ -208,14 +210,13 @@ if __name__ == "__main__":
         logging.info("HA connected")
         addresses = resolver.addresses_by_version(IPVersion.V4Only)
         port = resolver.port
+        if port is None:
+            port = "0"
         address = addresses[0]
         address_str = ""
         for i in address:
             address_str += str(int(i))
             address_str += "."
         ha_voice_address = address_str[:-1]
-    else:
-        ha_voice_address = os.getenv("HA_VOICE_IP")
-        port = os.getenv("HA_VOICE_PORT")
     nabu_server: nabuServer = nabuServer()
     asyncio.run(nabu_server.start(ha_voice_address, int(port)))

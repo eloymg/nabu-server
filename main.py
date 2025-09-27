@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 FILE_PATH = "output.wav"
-PORT = 8080
+PORT = 8123
 
 # Make sure the file exists
 if not os.path.exists(FILE_PATH):

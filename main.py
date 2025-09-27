@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 FILE_PATH = "output.wav"
-PORT = 8123
+PORT = 8080
 
 # Make sure the file exists
 if not os.path.exists(FILE_PATH):
@@ -194,20 +194,26 @@ if __name__ == "__main__":
     server_thread.start()
     os.makedirs(pathlib.Path(f"voices/{PIPER_VOICE}/"), exist_ok=True)
     download_voices.download_voice(PIPER_VOICE, pathlib.Path(f"voices/{PIPER_VOICE}/"))
-    zeroconf = Zeroconf()
-    listener = MyListener()
-    browser = ServiceBrowser(zeroconf, HNAME, listener)
-    resolver = AddressResolver(HNAME)
-    finded = False
-    while not finded:
-        finded = resolver.request(zeroconf, 3000)
-        logging.info("Waiting HA voice")
-    logging.info("HA connected")
-    addresses = resolver.addresses_by_version(IPVersion.V4Only)
-    port = resolver.port
-    address = addresses[0]
-    address_str = ""
-    for i in address:
-        address_str += str(int(i))
-        address_str += "."
-    asyncio.run(main(address_str[:-1], port))
+    if os.getenv("HA_VOICE_IP") is None:
+        zeroconf = Zeroconf()
+        listener = MyListener()
+        browser = ServiceBrowser(zeroconf, HNAME, listener)
+        resolver = AddressResolver(HNAME)
+        finded = False
+        while not finded:
+            finded = resolver.request(zeroconf, 3000)
+            logging.info("Waiting HA voice")
+        logging.info("HA connected")
+        addresses = resolver.addresses_by_version(IPVersion.V4Only)
+        port = resolver.port
+        address = addresses[0]
+        address_str = ""
+        for i in address:
+            address_str += str(int(i))
+            address_str += "."
+        ha_voice_address = address_str[:-1]
+    else:
+        ha_voice_address = os.getenv("HA_VOICE_IP")
+        port = os.getenv("HA_VOICE_PORT")
+
+    asyncio.run(main(ha_voice_address, port))

@@ -74,39 +74,53 @@ def pcm_to_wav_bytes(
     return buffer.getvalue()
 
 
-async def main(address: str, port: int):
-    api = APIClient(address=address, port=port, password="")
-    await api.connect(login=True)
-    info = await api.device_info_and_list_entities()
-    logging.info(info[1])
+class nabuServer:
+    def __init__(self):
+        self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self.vad = MicroVad()
+        self.run_task = None
 
-    async def handle_pipeline_start(a, b, c, d) -> int | None:
-        api.send_voice_assistant_event(
+    async def start(self, address: str, port: int):
+        self.api_client = APIClient(address=address, port=port, password="")
+        await self.api_client.connect(login=True)
+        logging.info("nabu waiting wake work")
+        self.api_client.subscribe_voice_assistant(
+            handle_start=self.handle_pipeline_start,
+            handle_stop=self.stop,
+            handle_audio=self.audio,
+        )
+        try:
+            while True:
+                await asyncio.sleep(10)
+        except KeyboardInterrupt:
+            logging.info("Disconnecting...")
+            await self.api_client.disconnect()
+
+    async def handle_pipeline_start(self, a, b, c, d) -> int:
+        self.api_client.send_voice_assistant_event(
             VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_START, {}
         )
         return 0
 
-    audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
-
-    async def run():
+    async def run(self):
         try:
             while True:
-                audio_queue.put_nowait(b"")
+                self.audio_queue.put_nowait(b"")
                 total = b""
                 while True:
-                    chunk = await audio_queue.get()
+                    chunk = await self.audio_queue.get()
                     if not chunk:
                         break
                     total += chunk
                 wav = pcm_to_wav_bytes(total)
                 result = await execute_main_workflow(wav)
-                tts_duration = piper(result)
-                api.send_voice_assistant_event(
+                tts_duration = self.piper(result)
+                self.api_client.send_voice_assistant_event(
                     VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_START, {}
                 )
                 logging.info(f"sending tts file: {NABU_SERVER_URL}/output.wav")
 
-                api.media_player_command(
+                self.api_client.media_player_command(
                     2232357057,
                     media_url=f"{NABU_SERVER_URL}/output.wav",
                     device_id=0,
@@ -114,79 +128,67 @@ async def main(address: str, port: int):
                 )
 
                 time.sleep(tts_duration)
-                api.send_voice_assistant_event(
+                self.api_client.send_voice_assistant_event(
                     VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_END, {}
                 )
-                api.send_voice_assistant_event(
+                self.api_client.send_voice_assistant_event(
                     VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, {}
                 )
+                self.reset_vad()
         except asyncio.CancelledError:
             logging.info("run cancelled")
             raise  # re-raise so asyncio knows it was cancelled
 
-    async def stop(s):
-        global run_task
-        cancel_run()
+    def reset_vad(self):
+        self.vad = MicroVad()
+
+    async def stop(self, _):
+        self.cancel_run()
+        self.reset_vad()
         logging.info("cancelled run task")
-        api.send_voice_assistant_event(
+        self.api_client.send_voice_assistant_event(
             VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, {}
         )
 
-    vad = MicroVad()
-    threshold = 0.5
-
-    async def audio(data: bytes):
-        global run_task
-        speech_prob: float = vad.Process10ms(data)
+    async def audio(self, data: bytes):
+        threshold = 0.5
+        speech_prob: float = self.vad.Process10ms(data)
         if speech_prob < 0:
             logging.info("Need more audio")
         elif speech_prob > threshold:
             logging.info("Speech")
         else:
             logging.info("Silence")
-            api.send_voice_assistant_event(
+            self.api_client.send_voice_assistant_event(
                 VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_END, {}
             )
-            run_task = asyncio.create_task(run())
+            self.run_task = asyncio.create_task(self.run())
+        await self.audio_queue.put(data)
 
-        await audio_queue.put(data)
+    def cancel_run(self):
+        if self.run_task and not self.run_task.done():
+            self.run_task.cancel()
+            self.run_task = None
 
-    def cancel_run():
-        global run_task
-        if run_task and not run_task.done():
-            run_task.cancel()
-            run_task = None
+    def piper(self, input: str) -> float:
+        voice = PiperVoice.load(
+            pathlib.Path(f"voices/{PIPER_VOICE}/{PIPER_VOICE}.onnx")
+        )
+        output_file = "output.wav"
 
-    api.subscribe_voice_assistant(
-        handle_start=handle_pipeline_start,
-        handle_stop=stop,
-        handle_audio=audio,
-    )
-    try:
-        while True:
-            await asyncio.sleep(10)
-    except KeyboardInterrupt:
-        logging.info("Disconnecting...")
-        await api.disconnect()
+        with wave.open(output_file, "wb") as wav_file:
+            voice.synthesize_wav(input, wav_file)
+
+        # Reopen to read metadata
+        with wave.open(output_file, "rb") as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate()
+            duration = frames / float(rate)
+
+        return duration
 
 
 HNAME = "home-assistant-voice-0918ba._esphomelib._tcp.local."
-
-
-def piper(input: str) -> float:
-    voice = PiperVoice.load(pathlib.Path(f"voices/{PIPER_VOICE}/{PIPER_VOICE}.onnx"))
-    output_file = "output.wav"
-
-    with wave.open(output_file, "wb") as wav_file:
-        voice.synthesize_wav(input, wav_file)
-
-    # Reopen to read metadata
-    with wave.open(output_file, "rb") as wav_file:
-        frames = wav_file.getnframes()
-        rate = wav_file.getframerate()
-        duration = frames / float(rate)
-
-    return duration
 
 
 if __name__ == "__main__":
@@ -215,5 +217,5 @@ if __name__ == "__main__":
     else:
         ha_voice_address = os.getenv("HA_VOICE_IP")
         port = os.getenv("HA_VOICE_PORT")
-
-    asyncio.run(main(ha_voice_address, int(port)))
+    nabu_server: nabuServer = nabuServer()
+    asyncio.run(nabu_server.start(ha_voice_address, int(port)))

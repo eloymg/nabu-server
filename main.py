@@ -10,11 +10,11 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 from aioesphomeapi import (
     APIClient,
-    VoiceAssistantAudioSettings,
     VoiceAssistantEventType,
 )
 from nabu_agent import execute_main_workflow
 from piper import PiperVoice, download_voices
+from pymicro_vad import MicroVad
 from zeroconf import (
     AddressResolver,
     IPVersion,
@@ -47,24 +47,21 @@ class SingleFileHandler(SimpleHTTPRequestHandler):
 
 def start_server():
     server = HTTPServer(("0.0.0.0", PORT), SingleFileHandler)
-    print(f"Serving {FILE_PATH} on port {PORT}")
+    logging.info(f"Serving {FILE_PATH} on port {PORT}")
     server.serve_forever()
 
 
 class MyListener(ServiceListener):
-    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        print(f"Service {name} updated")
-
-    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        print(f"Service {name} removed")
-
     def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         info = zc.get_service_info(type_, name)
         print(f"Service {name} added, service info: {info}")
 
 
 def pcm_to_wav_bytes(
-    audio_bytes: bytes, n_channels=1, sample_width=2, frame_rate=44100
+    audio_bytes: bytes,
+    n_channels: int = 1,
+    sample_width: int = 2,
+    frame_rate: int = 16000,
 ) -> bytes:
     buffer = io.BytesIO()
 
@@ -77,51 +74,45 @@ def pcm_to_wav_bytes(
     return buffer.getvalue()
 
 
-async def main(address, port):
+async def main(address: str, port: int):
     api = APIClient(address=address, port=port, password="")
     await api.connect(login=True)
-    device_info = await api.device_info_and_list_entities()
-    print(device_info)
+    info = await api.device_info_and_list_entities()
+    logging.info(info[1])
 
-    async def handle_pipeline_start(
-        conversation_id: str,
-        flags: int,
-        audio_settings: VoiceAssistantAudioSettings,
-        wake_word_phrase: str | None,
-    ) -> int | None:
-        print("aconversation_id:", conversation_id)
-        print("flags:", flags)
-        print("audio_settings:", audio_settings)
-        print("wake_word_phrase:", wake_word_phrase)
+    async def handle_pipeline_start(a, b, c, d) -> int | None:
         api.send_voice_assistant_event(
             VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_START, {}
         )
         return 0
 
-    audio_queue = asyncio.Queue()
+    audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     async def run():
         try:
             while True:
-                audio_queue.put_nowait(None)
+                audio_queue.put_nowait(b"")
                 total = b""
                 while True:
                     chunk = await audio_queue.get()
                     if not chunk:
                         break
                     total += chunk
-                wav = pcm_to_wav_bytes(total, 1, 2, 16000)
+                wav = pcm_to_wav_bytes(total)
                 result = await execute_main_workflow(wav)
                 tts_duration = piper(result)
                 api.send_voice_assistant_event(
                     VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_START, {}
                 )
+                logging.info(f"sending tts file: {NABU_SERVER_URL}/output.wav")
+
                 api.media_player_command(
                     2232357057,
-                    # media_url="https://testfiledownload.net/wp-content/uploads/2024/10/1.8-MB.flac",
-                    media_url="{NABU_SERVER_URL}/output.wav",
+                    media_url=f"{NABU_SERVER_URL}/output.wav",
                     device_id=0,
+                    volume=100,
                 )
+
                 time.sleep(tts_duration)
                 api.send_voice_assistant_event(
                     VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_END, {}
@@ -130,50 +121,52 @@ async def main(address, port):
                     VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, {}
                 )
         except asyncio.CancelledError:
-            print("run cancelled")
+            logging.info("run cancelled")
             raise  # re-raise so asyncio knows it was cancelled
 
     async def stop(s):
-        global play_task
-        cancel_play()
-        print("Cancelled:", s)
+        global run_task
+        cancel_run()
+        logging.info("cancelled run task")
         api.send_voice_assistant_event(
             VoiceAssistantEventType.VOICE_ASSISTANT_RUN_END, {}
         )
 
-    async def audio(data):
-        global play_task
+    vad = MicroVad()
+    threshold = 0.5
 
-        print(audio_queue.qsize())
-        if audio_queue.qsize() == 100:
+    async def audio(data: bytes):
+        global run_task
+        speech_prob: float = vad.Process10ms(data)
+        if speech_prob < 0:
+            logging.info("Need more audio")
+        elif speech_prob > threshold:
+            logging.info("Speech")
+        else:
+            logging.info("Silence")
             api.send_voice_assistant_event(
                 VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_END, {}
             )
-            # start play in a task so we can cancel it later
-            play_task = asyncio.create_task(run())
+            run_task = asyncio.create_task(run())
 
         await audio_queue.put(data)
 
-    def cancel_play():
-        global play_task
-        if play_task and not play_task.done():
-            play_task.cancel()
-            play_task = None
-
-    async def finish(f):
-        print("finish:", f)
+    def cancel_run():
+        global run_task
+        if run_task and not run_task.done():
+            run_task.cancel()
+            run_task = None
 
     api.subscribe_voice_assistant(
         handle_start=handle_pipeline_start,
         handle_stop=stop,
         handle_audio=audio,
-        handle_announcement_finished=finish,
     )
     try:
         while True:
             await asyncio.sleep(10)
     except KeyboardInterrupt:
-        print("Disconnecting...")
+        logging.info("Disconnecting...")
         await api.disconnect()
 
 

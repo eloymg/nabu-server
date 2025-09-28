@@ -198,7 +198,7 @@ if __name__ == "__main__":
     download_voices.download_voice(PIPER_VOICE, pathlib.Path(f"voices/{PIPER_VOICE}/"))
     ha_voice_address = os.getenv("HA_VOICE_IP")
     port = os.getenv("HA_VOICE_PORT")
-    if ha_voice_address is None or port:
+    if ha_voice_address is None or port is None:
         zeroconf = Zeroconf()
         listener = MyListener()
         browser = ServiceBrowser(zeroconf, HNAME, listener)

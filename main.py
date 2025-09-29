@@ -104,6 +104,9 @@ class nabuServer:
         self, a: str, b: int, c: VoiceAssistantAudioSettings, d: str | None
     ) -> int:
         self.api_client.send_voice_assistant_event(
+            VoiceAssistantEventType.VOICE_ASSISTANT_RUN_START, {}
+        )
+        self.api_client.send_voice_assistant_event(
             VoiceAssistantEventType.VOICE_ASSISTANT_STT_VAD_START, {}
         )
         return 0
@@ -123,12 +126,11 @@ class nabuServer:
             VoiceAssistantEventType.VOICE_ASSISTANT_TTS_STREAM_START, {}
         )
         logging.info(f"sending tts file: {NABU_SERVER_URL}/output.wav")
-
         self.api_client.media_player_command(
             2232357057,
             media_url=f"{NABU_SERVER_URL}/output.wav",
             device_id=0,
-            volume=100,
+            announcement=True,
         )
         time.sleep(tts_duration)
         self.api_client.send_voice_assistant_event(

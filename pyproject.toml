@@ -14,3 +14,5 @@ dependencies = [
 
 [tool.uv.sources]
 nabu-agent = { git = "https://github.com/und1n3/nabu-agent", rev = "whisper-test" }
+
+

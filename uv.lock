@@ -961,7 +961,7 @@ wheels = [
 [[package]]
 name = "nabu-agent"
 version = "0.2.0"
-source = { git = "https://github.com/und1n3/nabu-agent?rev=whisper-test#61f815ded8c8e573172f6c3fba15e9be29ff7a80" }
+source = { git = "https://github.com/und1n3/nabu-agent?rev=whisper-test#f8c98fca33c5bd7d1b8479f8c211e2bcb2d67365" }
 dependencies = [
     { name = "faster-whisper" },
     { name = "langchain-community" },

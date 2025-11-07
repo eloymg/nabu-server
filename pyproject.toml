@@ -3,7 +3,7 @@ name = "nabu-server"
 version = "0.1.0"
 description = "Server for ha voice"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = "~=3.13.0"
 dependencies = [
     "aioesphomeapi>=41.7.0",
     "nabu-agent",

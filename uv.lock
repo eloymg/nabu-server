@@ -1080,8 +1080,8 @@ wheels = [
 
 [[package]]
 name = "nabu-agent"
-version = "0.3.0"
-source = { git = "https://github.com/und1n3/nabu-agent#dac7f16887050c7e55f6bd634694ec4cb4f7a5a9" }
+version = "0.3.1"
+source = { git = "https://github.com/und1n3/nabu-agent?rev=0.3.1#4b07ed71a2e55a373297dbb8d58b07381b009e34" }
 dependencies = [
     { name = "faster-whisper" },
     { name = "geopy" },
@@ -1114,7 +1114,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aioesphomeapi", specifier = ">=41.7.0" },
-    { name = "nabu-agent", git = "https://github.com/und1n3/nabu-agent" },
+    { name = "nabu-agent", git = "https://github.com/und1n3/nabu-agent?rev=0.3.1" },
     { name = "piper-tts", specifier = ">=1.3.0" },
     { name = "pymicro-vad", specifier = ">=1.0.2" },
     { name = "zeroconf", specifier = ">=0.147.2" },
